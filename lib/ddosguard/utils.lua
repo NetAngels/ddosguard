@@ -12,7 +12,7 @@ end
 
 function utils.send_cookie(control_cookie, rnd, cookie_domain)
     ngx.header['Set-Cookie'] = str_fmt('%s=%s_%s; max-age=%d; path=/; domain=%s; HttpOnly',
-        USER_COOKIE_NAME, escape_uri(control_cookie), rnd, USER_COOKIE_TTL, cookie_domain
+        USER_COOKIE_NAME, ngx.escape_uri(control_cookie), rnd, USER_COOKIE_TTL, cookie_domain
     )
 end
 
