@@ -1,0 +1,39 @@
+version: "3"
+services:
+    nginx:
+        build:
+            context: .
+        image: netangels/ddosguard:latest
+        # mode host - is necessary so nginx would see real ip addresses
+        network_mode: "host"
+        volumes:
+            # main configuration file. EDIT IT before running in production!
+            - ./nginx/conf.d/99_ddosguard.conf:/etc/nginx/conf.d/99_ddosguard.conf
+
+            # your proxied websites go here:
+            - ./nginx/conf.d/sites.conf:/etc/nginx/conf.d/sites.conf
+
+            # Protected web sites and urls
+            - ./nginx/under_attack:/etc/nginx/under_attack
+            - ./nginx/protected_urls:/etc/nginx/protected_urls
+
+            # whitelists
+            # - ./nginx/whitelisted_user_agents:/etc/nginx/whitelisted_user_agents
+            # - ./nginx/whitelisted_networks:/etc/nginx/whitelisted_networks
+
+            # per site and per IP hit limits
+            # - ./nginx/limit_hits_per_ip:/etc/nginx/limit_hits_per_ip
+            # - ./nginx/limit_hits_per_vhost:/etc/nginx/limit_hits_per_vhost
+
+            # protection is disabled for the following web sites
+            # - ./nginx/protection_disabled:/etc/nginx/protection_disabled
+            
+            # uncomment if you want to change source code
+            #- ./lua/ddosguard:/usr/local/openresty/lualib/ddosguard
+        ports:
+            - "80:80"
+
+    redis:
+        image: redis:7
+        ports:
+            - "127.0.0.1:6379:6379"

@@ -1,0 +1,9 @@
+~/administrator/$ htmlcookie;
+~/administrator/index\.php$ htmlcookie;
+~/wp-login\.php$ htmlcookie;
+~^/mysql/ htmlcookie;
+~/dumper\.php$ htmlcookie;
+~^/connectors/system/phpthumb.php$ htmlcookie;
+~^/[^/]*[a-z]+[0-9]+[a-z]+[0-9]+[^/]*.php jscookie;
+~^/admin/$ htmlcookie;
+~^/admin/index\.php$ htmlcookie;

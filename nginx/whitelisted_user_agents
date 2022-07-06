@@ -1,0 +1,5 @@
+"~Yandex.* \+http://yandex\.com/bots" "yandex";
+"~Googlebot" "google";
+"~Mail\.RU_Bot/.*; \+//go\.mail\.ru/help/robots" "mail_ru";
+"~Jetpack by WordPress\.com" "pass";
+"~facebookexternalhit/1\.1 \(\+http://www\.facebook\.com/externalhit_uatext\.php\)" "pass";
