@@ -2,7 +2,6 @@
 
 local guard = {}
 
-local redis = require "resty.redis"
 local protectors = require "ddosguard.protectors"
 local recaptcha = require "ddosguard.recaptcha"
 local resolver = require "resty.dns.resolver"
