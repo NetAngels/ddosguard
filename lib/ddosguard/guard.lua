@@ -57,9 +57,7 @@ local function incr_expire(red, zname, vname, ttl)
     local ttl = ttl or STAT_TTL
     local newval, err
     newval, err = red:incr(zname .. ":" .. vname, 1, 0)  -- init 0 + value when not exists
-    if err == nil then
-        red:set(zname .. ":" .. vname, newval, ttl)  -- set ttl
-    end
+    red:set(zname .. ":" .. vname, newval, ttl)  -- set ttl
 end
 
 local function gen_cookie(prefix, rnd, server_name)
@@ -73,7 +71,6 @@ local function forbidden(red)
     ngx.header['Content-Type'] = "text/html; charset=utf-8"
     ngx.status = ngx.HTTP_FORBIDDEN
     ngx.say(FORBIDDEN_TEXT)
-    -- terminate(red)
 end
 
 local function captcha(red, uid)
@@ -204,8 +201,7 @@ function guard.access()
     incr_expire(red, "aliases-hits:" .. server_name .. ":" .. timestamp, host)
 
     -- таблица соответствий шифрованного user-agent реальному
-    red:set("UA:" .. user_agent, user_agent_full)
-    red:expire("UA:" .. user_agent, STAT_TTL)
+    red:set("UA:" .. user_agent, user_agent_full, STAT_TTL)
 
     -- хиты на страницах сайтов sites-pages:domain2.ru:get:timestamp({url1: 10}, {url2: 5})
     incr_expire(red, "site-pages:" .. server_name .. ":" .. timestamp, request_method .. " " .. request_uri)
@@ -256,7 +252,7 @@ function guard.access()
     -- Проверяем uid в списке разгадавших капчу
     local allow, err = red:get("allow:" .. uid)
     if allow == "1" then
-        red:expire("allow:" .. uid, BAN_TTL) -- продляем действие allow:uid
+        red:set("allow:" .. uid, allow, BAN_TTL) -- продляем действие allow:uid
     end
 
 
@@ -291,15 +287,15 @@ function guard.access()
         -- мы оказались тут только если cookie была неправильная или отсутствовала
         user_cookie = ''
         -- увеличиваем счетчик попыток произвести проверку
-        local cnt, err = red:incr("cnt:" .. uid)
-        red:expire("cnt:" .. uid, 300)
+        local cnt, err = red:incr("cnt:" .. uid, 1, 0)
+        red:set("cnt:" .. uid, cnt, ttl)  -- set ttl
 
         if cnt > 3 then
             -- лимит исчерпан, иди в бан
             red:del("cnt:" .. uid)
-            red:set("ban:" .. uid, 1)
-            red:expire("ban:" .. uid, BAN_TTL)
-            red:expire("UA:" .. user_agent, BAN_TTL)  -- неплохо помнить UA для забаненных в течение BAN_TTL, а не STAT_TTL
+            red:set("ban:" .. uid, 1, BAN_TTL)
+            local val, err = red:get("UA:" .. user_agent)
+            red:set("UA:" .. user_agent, val, BAN_TTL)  -- неплохо помнить UA для забаненных в течение BAN_TTL, а не STAT_TTL
             incr_expire(red, "site-bots:" .. timestamp, server_name)
             log(ALERT, 'Banned bot: "' .. uid .. '", under_attack: ' .. under_attack .. ', protected_url: ' .. protected_url)
             captcha(red, uid)
@@ -314,9 +310,7 @@ function guard.access()
         end
 
         protectors[protector](control_cookie, rnd, cookie_domain)
-        terminate(red)
     end
-    red:set_keepalive(100000, 100)
     return
 end
 
