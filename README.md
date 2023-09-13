@@ -2,8 +2,6 @@
 
 DDoSGuard is a pretty old yet effective solution to filter http(s) flood DDoS attacks. The core of the project is written in LUA and is heavily based on Openresty libraries.
 
-DDoSGuard requires Redis as a database backend.
-
 ## Configuration
 
 DDoSGuard has a lot of tweakable config files. Main configuration file is `nginx/conf.d/99_ddosguard.conf`. Open it and change `SECRET`, `RECAPTCHA_PUBLIC` and `RECAPTCHA_PRIVATE` keys. Don't forget to mount edited file inside your Docker container as demonstrated in `docker-compose.yml.example`.
@@ -16,7 +14,7 @@ There are 3 protection strategies available:
 
 * `htmlcookie` - basic protection against base level bots that don't read generated output. It sets up a test cookie and then checks if this cookie is present in the following requests.
 * `jscookie` - more advanced, JavaScript based mechanism that sets up a test cookie.
-* `captcha` - any visitor is required to solve Recaptcha to access website. No cookies used. Allowed visitors are stored in Redis based on their IP and User-Agent.
+* `captcha` - any visitor is required to solve Recaptcha to access website. No cookies used. Allowed visitors are stored in internal storage based on their IP and User-Agent.
 
 Feel free to contribute your own strategies.
 

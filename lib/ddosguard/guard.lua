@@ -2,13 +2,13 @@
 
 local guard = {}
 
-local redis = require "resty.redis"
 local protectors = require "ddosguard.protectors"
 local recaptcha = require "ddosguard.recaptcha"
 local resolver = require "resty.dns.resolver"
 local http = require "resty.http"
 
 local cache = ngx.shared.cache
+local redislike = ngx.shared.redislike
 local encode_base64 = ngx.encode_base64
 local sha1_bin = ngx.sha1_bin
 local re_sub = ngx.re.sub
@@ -53,18 +53,11 @@ local function zincr(name, ttl, incr)
     return val
 end
 
-local function terminate(red)
-    -- We can't set ngx.status here because we send response body in protectors and then
-    -- we call terminate(). Otherwise we'd get "an attempt to set ngx.status after sending out response headers" error
-    red:set_keepalive(100000, 100)
-    ngx.ctx.terminated = 1
-    ngx.exit(ngx.HTTP_OK)
-end
-
 local function incr_expire(red, zname, vname, ttl)
     local ttl = ttl or STAT_TTL
-    red:zincrby(zname, 1, vname)
-    red:expire(zname, ttl)
+    local newval, err
+    newval, err = red:incr(zname .. ":" .. vname, 1, 0)  -- init 0 + value when not exists
+    red:set(zname .. ":" .. vname, newval, ttl)  -- set ttl
 end
 
 local function gen_cookie(prefix, rnd, server_name)
@@ -78,22 +71,15 @@ local function forbidden(red)
     ngx.header['Content-Type'] = "text/html; charset=utf-8"
     ngx.status = ngx.HTTP_FORBIDDEN
     ngx.say(FORBIDDEN_TEXT)
-    terminate(red)
 end
 
 local function captcha(red, uid)
     if recaptcha.run() then -- true if captcha has been passed, false otherwise
-        red:init_pipeline(4)
-        red:del("cnt:" .. uid)
-        red:del("ban:" .. uid)
-        red:set("allow:" .. uid, 1) -- включим его в whitelist
-        red:expire("allow:" .. uid, BAN_TTL)
-        red:commit_pipeline()
-        red:set_keepalive(100000, 100)
+        red:delete("cnt:" .. uid)
+        red:delete("ban:" .. uid)
+        red:set("allow:" .. uid, 1, BAN_TTL) -- включим его в whitelist
         ngx.ctx.terminated = 1 -- этот запрос все равно считать не надо, надо только следующий
         return ngx.redirect(ngxvar.request_uri)
-    else
-        terminate(red)
     end
 end
 
@@ -104,7 +90,7 @@ local function check_search_engine_bot(red, bot, ip)
 
     local test, err = red:get("se:" .. ip)
     if test == "1" then
-        red:expire("se:" .. ip, SE_TTL)
+        red:set("se:" .. ip, test, SE_TTL)
         return true
     end
     if test == "0" then
@@ -131,8 +117,7 @@ local function check_search_engine_bot(red, bot, ip)
 
     if not ans_ptr then
         log(ALERT, "DNS resolver failed to query PTR: ", err)
-        red:set("se:" .. ip, 0)
-        red:expire("se:" .. ip, BAN_TTL)
+        red:set("se:" .. ip, 0, BAN_TTL)
         return false
     end
 
@@ -152,14 +137,12 @@ local function check_search_engine_bot(red, bot, ip)
     local ans_a, err = r:query(ptr_name, { qtype = r.TYPE_A })
     if not ans_a then
         log(ALERT, "DNS resolver failed to query A: ", err)
-        red:set("se:" .. ip, 0)
-        red:expire("se:" .. ip, BAN_TTL)
+        red:set("se:" .. ip, 0, BAN_TTL)
         return false
     end
     if ans_a.errcode then -- nonexistent domain
         log(ALERT, "Fake search engine bot '", bot, "': ptr=", ptr_name)
-        red:set("se:" .. ip, 0)
-        red:expire("se:" .. ip, SE_TTL)
+        red:set("se:" .. ip, 0, SE_TTL)
         return false
     end
 
@@ -167,13 +150,11 @@ local function check_search_engine_bot(red, bot, ip)
 
     if dns_a == ip and re_match(ptr_name, se_bots[bot], "imjo") then
         log(ALERT, "Search engine bot '", bot, "': ptr=", ptr_name, ", dns_a=", dns_a, " = CONFIRMED")
-        red:set("se:" .. ip, 1)
-        red:expire("se:" .. ip, SE_TTL)
+        red:set("se:" .. ip, 1, SE_TTL)
         return true
     end
     log(ALERT, "Fake search engine bot '", bot, "': ptr=", ptr_name, ", dns_a=", dns_a)
-    red:set("se:" .. ip, 0)
-    red:expire("se:" .. ip, SE_TTL)
+    red:set("se:" .. ip, 0, SE_TTL)
     return false
 end
 
@@ -182,19 +163,7 @@ function guard.access()
         return
     end
 
-    local red = redis:new()
-    red:set_timeout(200)
-
-    local ok, err = red:connect(REDIS_HOST, REDIS_PORT)
-    if not ok then
-        ok, err = red:connect(REDIS_HOST, REDIS_PORT)
-        if not ok then
-            log(ALERT, "Failed to connect to redis after 2 tries:", err)
-            return
-        end
-    end
-    red:select(0)
-    red:set_timeout(1000)
+    local red = ngx.shared.redislike
 
     local under_attack = ngxvar.under_attack or "0"
     local protected_url = ngxvar.protected_url or "0"
@@ -224,8 +193,6 @@ function guard.access()
         request_uri = newstr
     end
 
-    red:init_pipeline(16)
-
     -- хиты на сайтах: sites-hits:ALL:timestamp({domain1.ru: 10}, {domain2.ru: 5})
     incr_expire(red, "sites-hits:ALL:" .. timestamp, server_name)
     incr_expire(red, "sites-hits:" .. request_method .. ":" .. timestamp, server_name)
@@ -234,8 +201,7 @@ function guard.access()
     incr_expire(red, "aliases-hits:" .. server_name .. ":" .. timestamp, host)
 
     -- таблица соответствий шифрованного user-agent реальному
-    red:set("UA:" .. user_agent, user_agent_full)
-    red:expire("UA:" .. user_agent, STAT_TTL)
+    red:set("UA:" .. user_agent, user_agent_full, STAT_TTL)
 
     -- хиты на страницах сайтов sites-pages:domain2.ru:get:timestamp({url1: 10}, {url2: 5})
     incr_expire(red, "site-pages:" .. server_name .. ":" .. timestamp, request_method .. " " .. request_uri)
@@ -249,15 +215,12 @@ function guard.access()
     -- какие страницы посещались с IP:UA: ip-pages:ip:get:timestamp({domain1.ru/url: 10}, ...)
     incr_expire(red, "ip-pages:" .. uid .. ":" .. timestamp, request_method .. " " .. server_name .. request_uri)
 
-    red:commit_pipeline()
-
     local search_engine_bot = false
     if ngxvar.is_search_engine_ua ~= "0" then
         search_engine_bot = check_search_engine_bot(red, ngxvar.is_search_engine_ua, ip)
     end
 
     if search_engine_bot or ngxvar.whitelisted ~= "0" or protection_disabled == "1" or request_method == "HEAD" then
-        red:set_keepalive(100000, 100)
         return
     end
 
@@ -289,12 +252,11 @@ function guard.access()
     -- Проверяем uid в списке разгадавших капчу
     local allow, err = red:get("allow:" .. uid)
     if allow == "1" then
-        red:expire("allow:" .. uid, BAN_TTL) -- продляем действие allow:uid
+        red:set("allow:" .. uid, allow, BAN_TTL) -- продляем действие allow:uid
     end
 
 
     if allow == "1" or (under_attack == "0" and protected_url == "0") then
-        red:set_keepalive(100000, 100)
         return
     end
 
@@ -325,15 +287,15 @@ function guard.access()
         -- мы оказались тут только если cookie была неправильная или отсутствовала
         user_cookie = ''
         -- увеличиваем счетчик попыток произвести проверку
-        local cnt, err = red:incr("cnt:" .. uid)
-        red:expire("cnt:" .. uid, 300)
+        local cnt, err = red:incr("cnt:" .. uid, 1, 0)
+        red:set("cnt:" .. uid, cnt, ttl)  -- set ttl
 
         if cnt > 3 then
             -- лимит исчерпан, иди в бан
             red:del("cnt:" .. uid)
-            red:set("ban:" .. uid, 1)
-            red:expire("ban:" .. uid, BAN_TTL)
-            red:expire("UA:" .. user_agent, BAN_TTL)  -- неплохо помнить UA для забаненных в течение BAN_TTL, а не STAT_TTL
+            red:set("ban:" .. uid, 1, BAN_TTL)
+            local val, err = red:get("UA:" .. user_agent)
+            red:set("UA:" .. user_agent, val, BAN_TTL)  -- неплохо помнить UA для забаненных в течение BAN_TTL, а не STAT_TTL
             incr_expire(red, "site-bots:" .. timestamp, server_name)
             log(ALERT, 'Banned bot: "' .. uid .. '", under_attack: ' .. under_attack .. ', protected_url: ' .. protected_url)
             captcha(red, uid)
@@ -348,9 +310,7 @@ function guard.access()
         end
 
         protectors[protector](control_cookie, rnd, cookie_domain)
-        terminate(red)
     end
-    red:set_keepalive(100000, 100)
     return
 end
 
@@ -396,6 +356,18 @@ function guard.get_cache()
         if val ~= nil and val > 0 then
             say(name .. " " .. val)
         end
+    end
+    redislike:flush_expired(0) -- remove expired from memory in periodic function
+end
+
+function guard.get_keys()
+    local keys, key, val
+
+    keys, err = redislike:get_keys(0)  -- 0 == all keys, not 1024 by default
+
+    for _, key in ipairs(keys) do
+        val, err = redislike:get(key)
+        say(key .. " " .. val)
     end
 end
 
