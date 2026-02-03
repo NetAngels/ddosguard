@@ -17,6 +17,9 @@ services:
             - ./nginx/under_attack:/etc/nginx/under_attack
             - ./nginx/protected_urls:/etc/nginx/protected_urls
 
+	    # SSL-certificate
+            - ./nginx/ssl:/etc/nginx/ssl
+
             # whitelists
             # - ./nginx/whitelisted_user_agents:/etc/nginx/whitelisted_user_agents
             # - ./nginx/whitelisted_networks:/etc/nginx/whitelisted_networks
@@ -28,7 +31,4 @@ services:
             # protection is disabled for the following web sites
             # - ./nginx/protection_disabled:/etc/nginx/protection_disabled
             
-            - ./lua/ddosguard:/usr/local/openresty/lualib/ddosguard
-        ports:
-            - "80:80"
-
+            #- ./lua/ddosguard:/usr/local/openresty/lualib/ddosguard
